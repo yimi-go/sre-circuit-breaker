@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/yimi-go/circuit-breaker"
-	"github.com/yimi-go/iter"
+
 	"github.com/yimi-go/window"
 )
 
@@ -23,8 +23,8 @@ type options struct {
 	ignoreRequests int64
 	// The total number of buckets in the statistics window.
 	buckets int
-	// The total duration of the statistics window.
-	windowDuration time.Duration
+	// The max duration of a bucket.
+	requireBucketDuration time.Duration
 }
 
 // WithInspirationSuccessRate sets the inspiration success rate (ISR) of the circuit breaker.
@@ -46,10 +46,10 @@ func WithIgnoreRequest(ir int64) Option {
 	}
 }
 
-// WithWindowDuration sets the total duration of the statistical window.
-func WithWindowDuration(d time.Duration) Option {
+// WithRequireBucketDuration sets the max duration of a bucket.
+func WithRequireBucketDuration(d time.Duration) Option {
 	return func(o *options) {
-		o.windowDuration = d
+		o.requireBucketDuration = d
 	}
 }
 
@@ -61,7 +61,7 @@ func WithBuckets(buckets int) Option {
 }
 
 type breaker struct {
-	stat      window.RollingCounter
+	stat      window.Window
 	rnd       sync.Pool
 	dropProba func(r *rand.Rand, proba float64) bool
 
@@ -72,18 +72,15 @@ type breaker struct {
 // New returns a sre circuit breaker by options.
 func New(opts ...Option) circuit_breaker.CircuitBreaker {
 	opt := options{
-		isr:            0.5,
-		ignoreRequests: 100,
-		buckets:        10,
-		windowDuration: 3 * time.Second,
+		isr:                   0.5,
+		ignoreRequests:        100,
+		buckets:               10,
+		requireBucketDuration: time.Duration(1 << 28),
 	}
 	for _, o := range opts {
 		o(&opt)
 	}
-	stat := window.NewRollingCounter(window.RollingCounterOpts{
-		WindowSize:          opt.buckets,
-		RequireBucketMillis: 300,
-	})
+	stat := window.NewWindow(opt.buckets, opt.requireBucketDuration)
 	return &breaker{
 		stat: stat,
 		rnd: sync.Pool{
@@ -100,19 +97,14 @@ func New(opts ...Option) circuit_breaker.CircuitBreaker {
 }
 
 func (b *breaker) summary() (success int64, total int64) {
-	b.stat.Reduce(func(iterator iter.Iterator[window.Bucket]) float64 {
-		for {
-			bucket, ok := iterator.Next()
-			if !ok {
-				break
-			}
-			total += int64(iter.Count(iter.Slice(bucket.Points())))
-			for _, p := range bucket.Points() {
-				success += int64(p)
-			}
-		}
-		return 0
-	})
+	//b.stat.Aggregation(0).Reduce(func(data []int64) {
+	//	total += int64(len(data))
+	//	for i := 0; i < len(data); i++ {
+	//		success += data[i]
+	//	}
+	//})
+	total = b.stat.Aggregation(0).Count()
+	success = b.stat.Aggregation(0).Sum()
 	return
 }
 
@@ -125,7 +117,11 @@ func (b *breaker) Allow() error {
 		return nil
 	}
 	dr := math.Max(0, (float64(total)-inspirationRequests)/float64(total+1))
-	drop := b.dropProba(b.rnd.Get().(*rand.Rand), dr)
+	rnd := b.rnd.Get().(*rand.Rand)
+	defer func() {
+		b.rnd.Put(rnd)
+	}()
+	drop := b.dropProba(rnd, dr)
 	if drop {
 		return circuit_breaker.ErrNotAllowed()
 	}

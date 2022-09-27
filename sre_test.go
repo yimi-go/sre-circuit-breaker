@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
 	"github.com/yimi-go/window"
 )
 
@@ -16,10 +17,7 @@ var (
 )
 
 func getSREBreaker() *breaker {
-	stat := window.NewRollingCounter(window.RollingCounterOpts{
-		WindowSize:          10,
-		RequireBucketMillis: 100,
-	})
+	stat := window.NewWindow(10, time.Duration(1<<26))
 	return &breaker{
 		stat: stat,
 
@@ -93,12 +91,12 @@ func testSREHalfOpen(t *testing.T, b *breaker) {
 }
 
 func TestSRE(t *testing.T) {
-	originNowFn := window.NowFunc
+	originNowFn := window.Now
 	defer func() {
-		window.NowFunc = originNowFn
+		window.Now = originNowFn
 	}()
-	now = window.NowFunc()
-	window.NowFunc = func() time.Time { return now }
+	now = window.Now()
+	window.Now = func() time.Time { return now }
 
 	b := getSREBreaker()
 	testSREClose(t, b)
@@ -111,12 +109,12 @@ func TestSRE(t *testing.T) {
 }
 
 func TestSRESelfProtection(t *testing.T) {
-	originNowFn := window.NowFunc
+	originNowFn := window.Now
 	defer func() {
-		window.NowFunc = originNowFn
+		window.Now = originNowFn
 	}()
-	now = window.NowFunc()
-	window.NowFunc = func() time.Time { return now }
+	now = window.Now()
+	window.Now = func() time.Time { return now }
 	t.Run("total request < 100", func(t *testing.T) {
 		b := getSREBreaker()
 		markFailed(b, 99)
@@ -133,12 +131,12 @@ func TestSRESelfProtection(t *testing.T) {
 }
 
 func TestSRESummary(t *testing.T) {
-	originNowFn := window.NowFunc
+	originNowFn := window.Now
 	defer func() {
-		window.NowFunc = originNowFn
+		window.Now = originNowFn
 	}()
-	now = window.NowFunc()
-	window.NowFunc = func() time.Time { return now }
+	now = window.Now()
+	window.Now = func() time.Time { return now }
 
 	var (
 		b           *breaker
@@ -196,14 +194,14 @@ func TestTrueOnProba(t *testing.T) {
 }
 
 func BenchmarkSreBreakerAllow(b *testing.B) {
-	breaker := getSREBreaker()
+	br := getSREBreaker()
 	b.ResetTimer()
 	for i := 0; i <= b.N; i++ {
-		_ = breaker.Allow()
+		_ = br.Allow()
 		if i%2 == 0 {
-			breaker.MarkSuccess()
+			br.MarkSuccess()
 		} else {
-			breaker.MarkFailed()
+			br.MarkFailed()
 		}
 	}
 }
@@ -226,12 +224,12 @@ func TestWithIgnoreRequest(t *testing.T) {
 	}
 }
 
-func TestWithWindowDuration(t *testing.T) {
+func TestWithRequireBucketDuration(t *testing.T) {
 	o := &options{}
 	d := time.Second
-	WithWindowDuration(d)(o)
-	if o.windowDuration != d {
-		t.Errorf("want %v, got %v", d, o.windowDuration)
+	WithRequireBucketDuration(d)(o)
+	if o.requireBucketDuration != d {
+		t.Errorf("want %v, got %v", d, o.requireBucketDuration)
 	}
 }
 
@@ -246,12 +244,12 @@ func TestWithBuckets(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	t.Run("no_opts", func(t *testing.T) {
-		originNowFn := window.NowFunc
+		originNowFn := window.Now
 		defer func() {
-			window.NowFunc = originNowFn
+			window.Now = originNowFn
 		}()
-		now = window.NowFunc()
-		window.NowFunc = func() time.Time { return now }
+		now = window.Now()
+		window.Now = func() time.Time { return now }
 
 		cb := New()
 		b, ok := cb.(*breaker)
