@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/stretchr/testify v1.8.0
 	github.com/yimi-go/circuit-breaker v0.0.1
-	github.com/yimi-go/window v0.0.4
+	github.com/yimi-go/window v0.0.6
 )
 
 require (
